@@ -34,13 +34,60 @@
 
       perSystem = {
         config,
+        lib,
         pkgs,
         ...
       }: {
-        devshells.default = {
+        devshells.default = let
+          cdToplevel = ''
+            cd "''${TOPLEVEL?}" || exit
+          '';
+        in {
+          env = [
+            {
+              name = "TOPLEVEL";
+              eval = ''
+                $(${lib.getExe pkgs.gitMinimal} rev-parse --show-toplevel 2>/dev/null || printf -- '%s' "$PRJ_ROOT")
+              '';
+            }
+          ];
+
           commands = [
             {
               package = pkgs.nvfetcher;
+            }
+
+            {
+              name = "update-sources";
+              category = "maintenance";
+              help = "Update nvfetcher-locked sources in nix/pkgs/_sources (extra args go to nvfetcher)";
+              command = ''
+                ${cdToplevel}
+                exec ${lib.getExe pkgs.nvfetcher} \
+                  --config nix/pkgs/nvfetcher.toml \
+                  --build-dir nix/pkgs/_sources \
+                  "$@"
+              '';
+            }
+
+            {
+              name = "dedupe-inputs";
+              category = "maintenance";
+              help = "Add/remove flake input follows to de-duplicate flake.lock (extra args go to `flake-edit follow`)";
+              command = ''
+                ${cdToplevel}
+                exec ${lib.getExe pkgs.flake-edit} --non-interactive follow "$@"
+              '';
+            }
+
+            {
+              name = "update-all";
+              category = "maintenance";
+              help = "Run update-sources, then dedupe-inputs";
+              command = ''
+                update-sources
+                dedupe-inputs
+              '';
             }
           ];
         };
