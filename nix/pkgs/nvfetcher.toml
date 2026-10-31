@@ -1,0 +1,3 @@
+[decode-config]
+fetch.github = "tasmota/decode-config"
+src.github = "tasmota/decode-config"

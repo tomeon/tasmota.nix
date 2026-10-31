@@ -1,0 +1,23 @@
+{
+    "decode-config": {
+        "cargoLock": null,
+        "date": null,
+        "extract": null,
+        "name": "decode-config",
+        "passthru": null,
+        "pinned": false,
+        "src": {
+            "deepClone": false,
+            "fetchSubmodules": false,
+            "leaveDotGit": false,
+            "name": null,
+            "owner": "tasmota",
+            "repo": "decode-config",
+            "rev": "v16.0.0",
+            "sha256": "sha256-XW2eCReAygo+yTruQRqqaYYfBPJjW70BJIfgn+fF9QQ=",
+            "sparseCheckout": [],
+            "type": "github"
+        },
+        "version": "v16.0.0"
+    }
+}
