@@ -55,6 +55,10 @@
 
           commands = [
             {
+              package = pkgs.act;
+            }
+
+            {
               package = pkgs.nvfetcher;
             }
 
