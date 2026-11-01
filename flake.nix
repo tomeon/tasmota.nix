@@ -15,12 +15,7 @@
   };
 
   outputs = inputs:
-    inputs.flake-parts.lib.mkFlake {inherit inputs;} ({
-      flake-parts-lib,
-      inputs,
-      moduleWithSystem,
-      ...
-    }: {
+    inputs.flake-parts.lib.mkFlake {inherit inputs;} ({inputs, ...}: {
       imports = [
         inputs.devshell.flakeModule
         inputs.flake-parts.flakeModules.modules
@@ -97,12 +92,22 @@
           ];
         };
 
-        packages = let
-          sources = pkgs.callPackage ./nix/pkgs/_sources/generated.nix {};
-        in {
-          decode-config = pkgs.callPackage (import ./nix/pkgs/decode-config {inherit sources;}) {};
-          default = config.packages.decode-config;
-        };
+        packages =
+          import ./nix/pkgs {inherit pkgs;}
+          // {
+            default = config.packages.decode-config;
+          };
+
+        checks = let
+          inherit (config.packages) decode-config tasmota-deploy;
+          prefix = prefix: lib.mapAttrs' (name: lib.nameValuePair "${prefix}-${name}");
+        in
+          prefix "decode-config" decode-config.tests
+          // prefix "tasmota-deploy" tasmota-deploy.tests
+          // import ./nix/tests {
+            inherit pkgs;
+            inherit (inputs) flake-parts self nixpkgs;
+          };
 
         treefmt = let
           nixCommon = {
@@ -112,9 +117,8 @@
         in {
           flakeFormatter = true;
           projectRootFile = "flake.nix";
-          #programs.black.enable = true;
-          #programs.ruff-check.enable = true;
-          #programs.ruff-format.enable = true;
+          programs.ruff-check.enable = true;
+          programs.ruff-format.enable = true;
           programs.alejandra = nixCommon;
           programs.deadnix =
             nixCommon
@@ -129,13 +133,16 @@
 
       flake = {
         modules = {
-          tasmota = let
-            decode-config = flake-parts-lib.importApply ./nix/modules/tasmota/default.nix {inherit moduleWithSystem;};
-          in {
-            inherit decode-config;
-            default = decode-config;
+          # Generic modules; evaluate with `lib.evalConfig`.
+          tasmota = {
+            default = ./nix/modules/tasmota;
+            decode-config = ./nix/modules/tasmota/decode-config.nix;
           };
+          # flake-parts module: `imports = [inputs.tasmota-nix.modules.flake.default];`
+          flake.default = ./nix/modules/flake-parts;
         };
+
+        lib.evalConfig = import ./nix/lib/eval-config.nix;
       };
     });
 }
