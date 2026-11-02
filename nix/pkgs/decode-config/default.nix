@@ -20,17 +20,25 @@
     # overwrites the recorded exit code when it reports "Premature exit".
     patches = [./exit-code.patch];
 
-    passthru = {
+    passthru = let
+      python = python3Packages.python.withPackages (_: dependencies);
+      layouts = "python3 -I ${./layouts.py}";
+    in {
       # Blank, valid configuration dump for offline validation and tests.
       # `hardware` is a `HARDWARE` attribute name from decode-config
       # (e.g. "ESP82", "ESP32ex").
       mkBlankDump = {hardware ? "ESP82"}:
-        runCommand "tasmota-blank-${hardware}.dmp" {
-          nativeBuildInputs = [(python3Packages.python.withPackages (_: dependencies))];
-        } ''
-          python3 -I ${./blank-dump.py} --hardware ${lib.escapeShellArg hardware} \
+        runCommand "tasmota-blank-${hardware}.dmp" {nativeBuildInputs = [python];} ''
+          ${layouts} blank --hardware ${lib.escapeShellArg hardware} \
             ${decode-config.src}/decode-config.py "$out"
         '';
+
+      # Structure of the decoded settings, merged over every hardware
+      # platform; used to reject unknown setting keys offline.
+      keySchema = runCommand "tasmota-key-schema.json" {nativeBuildInputs = [python];} ''
+        ${layouts} keys ${decode-config.src}/decode-config.py \
+          ${lib.getExe decode-config} "$out"
+      '';
 
       tests.exit-codes = runCommand "decode-config-exit-codes" {nativeBuildInputs = [decode-config];} ''
         expect() {

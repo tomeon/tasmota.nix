@@ -110,9 +110,16 @@ before changing it. Restore a backup with
 `decode-config.py -s <device> -i <file>.dmp`.
 
 For each device, `diff` and `switch` download the configuration once, apply
-your settings to a local copy, and compare the two. Errors such as unknown
-keys show up at that point, before anything is uploaded. Password fields are
-compared but their values are never printed.
+your settings to a local copy, and compare the two. Errors show up at that
+point, before anything is uploaded: invalid values, and keys the device's
+configuration doesn't have (decode-config itself silently ignores misspelled
+nested keys and keys for other hardware). `build` checks keys against every
+hardware platform's layout and values against a blank ESP8266 configuration.
+
+Password fields and values declared with `_secret` are compared but never
+printed, secret values are scrubbed from decode-config's error messages, and
+backups and `pull -o` files are created readable only by you (configuration
+dumps contain recoverable credentials).
 
 The exit status is 0 when every selected device succeeded, 1 when any failed
 (the others are still processed), and 2 for usage errors.

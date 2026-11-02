@@ -102,9 +102,12 @@
         type = types.bool;
         default = true;
         description = ''
-          Whether to check {option}`settings` at build time against a blank
-          configuration in decode-config's newest layout.  Disable this for
-          a device on older firmware that uses settings no longer present.
+          Whether to check {option}`settings` at build time: keys against
+          every hardware platform's layout, values against a blank ESP8266
+          configuration, both in decode-config's newest layout.  Disable this
+          for a device on older firmware that uses settings no longer present.
+          Keys and values are always checked against the device itself before
+          anything is uploaded.
         '';
       };
     };
@@ -114,6 +117,7 @@
     version = 1;
     decodeConfig = lib.getExe cfg.package;
     blankDump = cfg.package.mkBlankDump {};
+    inherit (cfg.package) keySchema;
     devices =
       lib.mapAttrs (
         name: device:
@@ -133,8 +137,8 @@ in {
       default = packages.decode-config;
       defaultText = literalExpression "decode-config from tasmota.nix";
       description = ''
-        decode-config package.  It must provide `mkBlankDump` in `passthru`,
-        as tasmota.nix's package does.
+        decode-config package.  It must provide `mkBlankDump` and
+        `keySchema` in `passthru`, as tasmota.nix's package does.
       '';
     };
 

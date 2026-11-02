@@ -65,6 +65,80 @@ class Secrets(unittest.TestCase):
             td.read_secret("/nonexistent/secret")
 
 
+SECRET_SETTINGS = {"sta_pwd": ["", {"_secret": "a"}], "x": {"y": {"_secret": "b"}}}
+
+
+class SecretPaths(unittest.TestCase):
+    def test_secret_paths(self):
+        self.assertEqual(
+            sorted(td.secret_paths(SECRET_SETTINGS)), ["sta_pwd[1]", "x.y"]
+        )
+
+    def test_mask_paths(self):
+        config = {"sta_pwd": ["p0", "p1"], "x": {"y": "v", "z": "w"}}
+        masked = td.mask_paths(config, set(td.secret_paths(SECRET_SETTINGS)))
+        self.assertEqual(
+            masked, {"sta_pwd": ["p0", "********"], "x": {"y": "********", "z": "w"}}
+        )
+
+
+class Redact(unittest.TestCase):
+    def test_redacts_raw_and_escaped_forms(self):
+        dc = td.DecodeConfig("dc", td.Device(name="d", source="d"), "/tmp", 1)
+        backslash, accent = "pa\\ss", "caf\u00e9"
+        dc.secrets.update({backslash, accent})
+        text = " ".join(
+            [backslash, repr(backslash)[1:-1], accent, json.dumps(accent)[1:-1]]
+        )
+        self.assertEqual(dc.redact(text), " ".join(["<secret>"] * 4))
+
+
+KNOWN = {"flag": {"mqtt_enabled": 0}, "timer": [{"arm": 0}], "hostname": ""}
+
+
+class UnknownKeys(unittest.TestCase):
+    def unknown(self, supplied):
+        return list(td.unknown_keys(supplied, KNOWN))
+
+    def test_known(self):
+        self.assertEqual(
+            self.unknown({"flag": {"mqtt_enabled": 1}, "hostname": "h"}), []
+        )
+
+    def test_nested_typo(self):
+        self.assertEqual(
+            self.unknown({"flag": {"mqtt_enabeld": 1}}), ["flag.mqtt_enabeld"]
+        )
+
+    def test_top_level_typo(self):
+        self.assertEqual(self.unknown({"hostnmae": "h"}), ["hostnmae"])
+
+    def test_list_elements(self):
+        self.assertEqual(
+            self.unknown({"timer": [{"arm": 1}, {"armm": 1}]}), ["timer[1].armm"]
+        )
+
+    def test_object_for_plain_value(self):
+        self.assertEqual(self.unknown({"hostname": {"a": 1}}), ["hostname"])
+
+
+class WritePrivate(unittest.TestCase):
+    def test_mode_and_replace(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "f")
+            td.write_private(path, b"one")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with self.assertRaises(FileExistsError):
+                td.write_private(path, b"two")
+            os.chmod(path, 0o644)
+            td.write_private(path, "three", replace=True)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with open(path) as f:
+                self.assertEqual(f.read(), "three")
+
+
 class PasswordConfig(unittest.TestCase):
     def test_quoted(self):
         self.assertEqual(td.password_config('a # "b'), 'password = "a # "b"\n')

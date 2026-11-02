@@ -137,6 +137,7 @@ in {
       check '.version == 1'
       check '.decodeConfig | test("/bin/decode-config.py$")'
       check '.blankDump | test("tasmota-blank-ESP82.dmp$")'
+      check '.keySchema | test("tasmota-key-schema.json$")'
       check '.devices | keys == ["kitchen", "plug"]'
       check '.devices.kitchen == {
         source: "http://kitchen.lan",

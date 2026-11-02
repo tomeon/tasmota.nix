@@ -42,6 +42,7 @@
             DECODE_CONFIG = lib.getExe decode-config;
             BLANK_DUMP_ESP82 = decode-config.mkBlankDump {};
             BLANK_DUMP_ESP32 = decode-config.mkBlankDump {hardware = "ESP32ex";};
+            KEY_SCHEMA = decode-config.keySchema;
             TASMOTA_DEPLOY = lib.getExe tasmota-deploy;
           }
           // env) ''

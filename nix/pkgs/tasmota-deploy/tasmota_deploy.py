@@ -56,6 +56,7 @@ class Device:
 class Manifest:
     decode_config: str
     blank_dump: str | None
+    key_schema: str | None
     devices: dict[str, Device]
 
 
@@ -85,6 +86,7 @@ def load_manifest(path):
     return Manifest(
         decode_config=data["decodeConfig"],
         blank_dump=data.get("blankDump"),
+        key_schema=data.get("keySchema"),
         devices=devices,
     )
 
@@ -136,14 +138,62 @@ def resolve_secrets(value, read):
     return value
 
 
+def _join(path, key):
+    return f"{path}.{key}" if path else key
+
+
+def secret_paths(settings, path=""):
+    """Yield the paths of `{"_secret": ...}` references in `settings`."""
+    if is_secret_ref(settings):
+        yield path
+    elif isinstance(settings, dict):
+        for key, value in settings.items():
+            yield from secret_paths(value, _join(path, key))
+    elif isinstance(settings, list):
+        for i, value in enumerate(settings):
+            yield from secret_paths(value, f"{path}[{i}]")
+
+
+def mask_paths(value, paths, path=""):
+    """Copy `value`, replacing whatever is at `paths` with HIDDEN_PASSWORD."""
+    if path in paths:
+        return HIDDEN_PASSWORD
+    if isinstance(value, dict):
+        return {k: mask_paths(v, paths, _join(path, k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mask_paths(v, paths, f"{path}[{i}]") for i, v in enumerate(value)]
+    return value
+
+
+def unknown_keys(supplied, known, path=""):
+    """Yield paths of keys in `supplied` settings that `known` lacks.
+
+    `known` is a decoded configuration, or a key schema whose lists hold a
+    single element structure.  decode-config rejects unknown top-level keys
+    but silently ignores unknown nested keys and keys for other hardware.
+    """
+    if isinstance(supplied, dict):
+        if not isinstance(known, dict):
+            yield path
+            return
+        for key in sorted(supplied):
+            sub = _join(path, key)
+            if key in known:
+                yield from unknown_keys(supplied[key], known[key], sub)
+            else:
+                yield sub
+    elif isinstance(supplied, list) and isinstance(known, list) and known:
+        for i, item in enumerate(supplied):
+            yield from unknown_keys(item, known[0], f"{path}[{i}]")
+
+
 def diff_values(before, after, path=""):
     """Yield (path, before, after) for each leaf that differs."""
     if isinstance(before, dict) and isinstance(after, dict):
         for key in sorted(set(before) | set(after)):
             if not path and key in DIFF_IGNORED_KEYS:
                 continue
-            sub = f"{path}.{key}" if path else key
-            yield from diff_values(before.get(key), after.get(key), sub)
+            yield from diff_values(before.get(key), after.get(key), _join(path, key))
     elif (
         isinstance(before, list)
         and isinstance(after, list)
@@ -159,7 +209,7 @@ def leaves(value, path=""):
     """Yield (path, value) for each leaf, with paths as in diff_values."""
     if isinstance(value, dict):
         for key in sorted(value):
-            yield from leaves(value[key], f"{path}.{key}" if path else key)
+            yield from leaves(value[key], _join(path, key))
     elif isinstance(value, list):
         for i, v in enumerate(value):
             yield from leaves(v, f"{path}[{i}]")
@@ -178,10 +228,21 @@ def format_changes(changes, hidden=frozenset()):
     ]
 
 
-def write_private(path, text):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
+def write_private(path, data, replace=False):
+    """Write `data` (str or bytes) to a file only the owner can read."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if replace else os.O_EXCL)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)  # an existing file may have had wider permissions
+    except BaseException:
+        os.close(fd)
+        raise
+    if isinstance(data, bytes):
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    else:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
 
 
 def password_config(password):
@@ -209,13 +270,32 @@ class DecodeConfig:
         self.workdir = workdir
         self.timeout = timeout
         self._config = None
+        # Secret values handed to decode-config; scrubbed from its output.
+        self.secrets = set()
+
+    def read_secret(self, path):
+        value = read_secret(path)
+        if value:
+            self.secrets.add(value)
+        return value
+
+    def redact(self, text):
+        """Replace known secret values in `text`, e.g. in decode-config errors."""
+        forms = {
+            form
+            for secret in self.secrets
+            for form in (secret, repr(secret)[1:-1], json.dumps(secret)[1:-1])
+        }
+        for form in sorted(forms, key=len, reverse=True):
+            text = text.replace(form, "<secret>")
+        return text
 
     def _remote_args(self):
         args = ["--source", self.device.source]
         if self.device.password_file:
             if self._config is None:
                 self._config = os.path.join(self.workdir, "decode-config.conf")
-                password = read_secret(self.device.password_file)
+                password = self.read_secret(self.device.password_file)
                 write_private(self._config, password_config(password))
             args += ["--config", self._config]
         return args
@@ -237,7 +317,7 @@ class DecodeConfig:
         except OSError as err:
             raise DeployError(f"cannot run decode-config: {err}") from err
         if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout).strip()
+            detail = self.redact((proc.stderr or proc.stdout).strip())
             raise DeployError(
                 f"decode-config exited with status {proc.returncode}"
                 + (":\n" + _indent(detail) if detail else "")
@@ -302,14 +382,26 @@ class Plan:
     settings_file: str
 
 
-def plan(dc, device, current, read):
+def plan(dc, device, current, read, schema=None):
     """Apply the device's settings to a copy of `current` and compare.
 
     Errors in the settings (unknown keys, invalid values) surface here,
-    before anything is written to the device.
+    before anything is written to the device.  Keys are checked against
+    `current` itself, or against `schema` when validating offline.
     """
     before = dc.decode_file(current, show_passwords=True)
     desired = resolve_secrets(device.settings, read)
+    unknown = list(unknown_keys(desired, before if schema is None else schema))
+    if unknown:
+        where = (
+            "this device's configuration"
+            if schema is None
+            else "any configuration layout decode-config knows"
+        )
+        raise DeployError(
+            f"settings not in {where} (misspelled, or for other hardware or "
+            f"firmware): {', '.join(unknown)}"
+        )
     # decode-config assumes ESP8266 for restore JSON without config_version
     # and rejects it on other platforms, so copy the device's value.
     if "config_version" in before:
@@ -324,14 +416,14 @@ def plan(dc, device, current, read):
         changed = a.read() != b.read()
     if not changed:
         return Plan(False, [], frozenset(), settings_file)
-    # Diff with real values, but remember which paths are passwords so
-    # their values are never printed.
+    # Diff with real values, but never print password fields or values
+    # declared as secrets.
     after = dc.decode_file(proposed, show_passwords=True)
     hidden = frozenset(
         path
         for path, value in leaves(dc.decode_file(current))
         if value == HIDDEN_PASSWORD
-    )
+    ) | frozenset(secret_paths(device.settings))
     return Plan(True, list(diff_values(before, after)), hidden, settings_file)
 
 
@@ -350,34 +442,37 @@ def describe(plan_):
 def do_build(manifest, device, dc, args):
     if not device.validate:
         return "skip", ["validation disabled"]
-    if not manifest.blank_dump:
-        raise DeployError("manifest has no blankDump to validate against")
+    if not (manifest.blank_dump and manifest.key_schema):
+        raise DeployError("manifest lacks blankDump or keySchema to validate against")
+    with open(manifest.key_schema, encoding="utf-8") as f:
+        schema = json.load(f)
     current = os.path.join(dc.workdir, "blank.dmp")
     shutil.copyfile(manifest.blank_dump, current)
     os.chmod(current, 0o600)
-    plan(dc, device, current, lambda _path: PLACEHOLDER_SECRET)
+    plan(dc, device, current, lambda _path: PLACEHOLDER_SECRET, schema)
     return "ok", ["settings valid"]
 
 
 def do_diff(manifest, device, dc, args):
     current = os.path.join(dc.workdir, "current.dmp")
     dc.pull(current)
-    p = plan(dc, device, current, read_secret)
+    p = plan(dc, device, current, dc.read_secret)
     return ("changed" if p.changed else "ok"), describe(p)
 
 
 def do_switch(manifest, device, dc, args):
     current = os.path.join(dc.workdir, "current.dmp")
     dc.pull(current)
-    p = plan(dc, device, current, read_secret)
+    p = plan(dc, device, current, dc.read_secret)
     lines = describe(p)
     if not p.changed:
         return "ok", lines
     if args.backup_dir:
         stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
         backup = os.path.join(args.backup_dir, f"{device.name}-{stamp}.dmp")
-        os.makedirs(args.backup_dir, exist_ok=True)
-        shutil.copyfile(current, backup)
+        os.makedirs(args.backup_dir, mode=0o700, exist_ok=True)
+        with open(current, "rb") as f:
+            write_private(backup, f.read())
         lines.append(f"backed up previous configuration to {backup}")
     dc.push(p.settings_file)
     lines.append("applied; the device restarts")
@@ -385,13 +480,14 @@ def do_switch(manifest, device, dc, args):
 
 
 def do_pull(manifest, device, dc, args):
-    config = dc.decode_remote()
+    # Passwords are hidden by decode-config; also hide the values of fields
+    # this device's settings declare as secrets.
+    config = mask_paths(dc.decode_remote(), frozenset(secret_paths(device.settings)))
     text = json.dumps(config, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     if args.output_dir:
-        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.output_dir, mode=0o700, exist_ok=True)
         path = os.path.join(args.output_dir, f"{device.name}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+        write_private(path, text, replace=True)
         return "ok", [f"wrote {path}"]
     return "ok", config
 
@@ -409,8 +505,8 @@ def run_device(manifest, device, args):
         dc = DecodeConfig(manifest.decode_config, device, workdir, args.timeout)
         try:
             return COMMANDS[args.command](manifest, device, dc, args)
-        except DeployError as err:
-            return "failed", str(err).splitlines()
+        except (DeployError, OSError) as err:
+            return "failed", dc.redact(str(err)).splitlines()
 
 
 def parse_args(argv):
