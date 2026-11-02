@@ -208,6 +208,23 @@ class Manifest(unittest.TestCase):
         self.assertEqual(m.devices["lamp"].tags, ["t"])
         self.assertTrue(m.devices["lamp"].validate)
 
+    def test_shared_target_is_rejected(self):
+        devices = {
+            "a": {"source": "Kitchen.lan"},
+            "b": {"source": "http://admin@kitchen.lan:80/"},
+            "c": {"source": "mqtt://broker/tasmota_c"},
+            "d": {"source": "mqtt://broker:1883/tasmota_c"},
+            "e": {"source": "mqtt://broker/tasmota_e"},
+        }
+        path = self.write({"version": 1, "decodeConfig": "x", "devices": devices})
+        with self.assertRaisesRegex(td.DeployError, r"share a source.*: a, b; c, d$"):
+            td.load_manifest(path)
+
+    def test_target(self):
+        self.assertEqual(td.target("lamp"), ("http", "lamp", 80, ""))
+        self.assertNotEqual(td.target("https://lamp"), td.target("http://lamp"))
+        self.assertEqual(td.target("http://lamp:bad"), "http://lamp:bad")
+
     def test_wrong_version(self):
         path = self.write({"version": 99, "decodeConfig": "x", "devices": {}})
         with self.assertRaisesRegex(td.DeployError, "version 99"):

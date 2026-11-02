@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
 
 MANIFEST_VERSION = 1
 SECRET_KEY = "_secret"
@@ -35,6 +36,7 @@ PLACEHOLDER_SECRET = "x"
 DIFF_IGNORED_KEYS = frozenset({"cfg_crc", "cfg_crc32"})
 # How decode-config renders every password field with --json-hide-pw.
 HIDDEN_PASSWORD = "********"
+DEFAULT_PORTS = {"http": 80, "https": 443, "mqtt": 1883, "mqtts": 8883}
 
 
 class DeployError(Exception):
@@ -83,12 +85,41 @@ def load_manifest(path):
         )
         for name, d in data.get("devices", {}).items()
     }
+    check_distinct_targets(devices)
     return Manifest(
         decode_config=data["decodeConfig"],
         blank_dump=data.get("blankDump"),
         key_schema=data.get("keySchema"),
         devices=devices,
     )
+
+
+def target(source):
+    """Normalize a decode-config source, so equal targets compare equal.
+
+    A bare host means HTTP to decode-config; credentials, case, default
+    ports and trailing slashes don't change the target.
+    """
+    try:
+        url = urllib.parse.urlsplit(source if "://" in source else f"http://{source}")
+        scheme = url.scheme.lower()
+        port = url.port or DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        return source
+    return (scheme, (url.hostname or "").lower(), port, url.path.rstrip("/"))
+
+
+def check_distinct_targets(devices):
+    """Reject devices sharing a target: their settings would race and conflict."""
+    by_target = {}
+    for name in sorted(devices):
+        by_target.setdefault(target(devices[name].source), []).append(name)
+    shared = [names for names in by_target.values() if len(names) > 1]
+    if shared:
+        raise DeployError(
+            "devices share a source, so their settings would conflict: "
+            + "; ".join(", ".join(names) for names in shared)
+        )
 
 
 def select_devices(devices, selector):

@@ -132,4 +132,13 @@ The exit status is 0 when every selected device succeeded, 1 when any failed
 - Build-time validation uses decode-config's newest settings layout. Set a
   device's `validate = false` if it runs older firmware with settings that
   have since been removed.
+- Over plain `http://`, the web password (HTTP basic auth) and the
+  configuration itself, including Wi-Fi and MQTT passwords that Tasmota only
+  obfuscates, cross the network unencrypted. Deploy from a network you trust.
+- Each device needs its own `source`; `tasmota-deploy` refuses manifests in
+  which two devices point at the same one, since their settings would race.
+- `switch` reports success once the device accepts the upload. It does not
+  wait for the restart and check again, because settings such as Wi-Fi can
+  move the device away from the address it was deployed to. Run `diff`
+  afterwards to confirm.
 - The tests use mock HTTP devices; MQTT is not tested end to end.

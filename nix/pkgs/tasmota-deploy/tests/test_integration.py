@@ -353,9 +353,9 @@ class Integration(unittest.TestCase):
     # -- build / pull ----------------------------------------------------------
 
     def test_build_validates_offline(self):
-        good = {"source": "http://unused.invalid", "settings": {"hostname": "x"}}
-        bad = {"source": "http://unused.invalid", "settings": {"bogus": 1}}
-        skipped = {**bad, "validate": False}
+        good = {"source": "http://good.invalid", "settings": {"hostname": "x"}}
+        bad = {"source": "http://bad.invalid", "settings": {"bogus": 1}}
+        skipped = {**bad, "source": "http://skipped.invalid", "validate": False}
         self.assertOk(
             self.deploy(self.manifest({"good": good, "skipped": skipped}), "build")
         )
