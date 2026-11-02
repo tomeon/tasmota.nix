@@ -1,0 +1,15 @@
+--- a/decode-config.py
++++ b/decode-config.py
+@@ -3780,7 +3780,11 @@
+     if src is not None:
+         msg = '{} ({})'.format(src, msg)
+     message(msg, type_=type_ if status != ExitCode.OK else LogType.INFO if ARGS.version is None else None, status=status, line=line)
+-    EXIT_CODE = status
++    # Only record failures: informational calls (status 0) and the recursive
++    # "Premature exit" call below (status None) must not overwrite the code
++    # of an earlier error, or of RESTORE_SKIPPED.
++    if status:
++        EXIT_CODE = status
+     if LogType.INFO == type_ and doexit is None:
+         doexit = False
+     if LogType.WARNING == type_:
