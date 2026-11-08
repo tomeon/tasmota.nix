@@ -45,7 +45,9 @@ configuration differs (Tasmota reboots after every upload).
   Tasmota arrays are positional. Use `lib.mkDefault` in `defaults`.
 - **MQTT sources** (`mqtt://` / `mqtts://`) are handed to decode-config the
   same way as HTTP ones, with `passwordFile` as the broker password; pass TLS
-  and topic options through `extraArgs`.
+  and topic options through `extraArgs`, which accepts only decode-config's
+  connection options (`--fulltopic`, `--cafile`, `--certfile`, `--keyfile`,
+  `--insecure`, `--keepalive`, `--port`, `--username`, `--group`).
 
 Besides `fleet.*`, the module has `packages.{decode-config,tasmota-deploy}`
 (the tools used) and `build.*`: `build.deployer` is `tasmota-deploy` with the

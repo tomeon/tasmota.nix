@@ -115,8 +115,11 @@
         default = [];
         example = ["--fulltopic" "%prefix%/%topic%/"];
         description = ''
-          Extra arguments for every decode-config call for this device,
-          e.g. MQTT TLS options.
+          Extra arguments for every decode-config call for this device.
+          Only connection options are accepted: `--fulltopic`, `--cafile`,
+          `--certfile`, `--keyfile`, `--insecure`, `--keepalive`,
+          `-P`/`--port`, `-u`/`--username` and `-g`/`--group`.
+          `tasmota-deploy` sets the source, credentials and everything else.
         '';
       };
 

@@ -18,7 +18,7 @@
     };
 
     devices.plug = {
-      extraArgs = ["--json-indent" "2"];
+      extraArgs = ["--username" "admin"];
       settings = {
         hostname = "plug";
         mqtt_host = "other.lan";

@@ -248,7 +248,7 @@ in {
         validate: true
       }'
       check '.devices.plug.source == "plug" and .devices.plug.passwordFile == null'
-      check '.devices.plug.extraArgs == ["--json-indent", "2"]'
+      check '.devices.plug.extraArgs == ["--username", "admin"]'
       test -x "$(jq -r .decodeConfig "$manifest")"
       touch "$out"
     '';

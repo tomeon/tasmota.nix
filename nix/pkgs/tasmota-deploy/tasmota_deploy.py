@@ -37,6 +37,24 @@ DIFF_IGNORED_KEYS = frozenset({"cfg_crc", "cfg_crc32"})
 # How decode-config renders every password field with --json-hide-pw.
 HIDDEN_PASSWORD = "********"
 DEFAULT_PORTS = {"http": 80, "https": 443, "mqtt": 1883, "mqtts": 8883}
+# decode-config options a device's extraArgs may use, with the number of
+# values each takes ("+": one or more).  Anything else is refused: this tool
+# sets the source, credentials, restore, backup and output options itself,
+# and decode-config would also accept abbreviations of them.
+EXTRA_ARG_OPTIONS = {
+    "--fulltopic": 1,
+    "--cafile": 1,
+    "--certfile": 1,
+    "--keyfile": 1,
+    "--insecure": 0,
+    "--keepalive": 1,
+    "-P": 1,
+    "--port": 1,
+    "-u": 1,
+    "--username": 1,
+    "-g": "+",
+    "--group": "+",
+}
 
 
 class DeployError(Exception):
@@ -85,6 +103,11 @@ def load_manifest(path):
         )
         for name, d in data.get("devices", {}).items()
     }
+    for device in devices.values():
+        try:
+            check_extra_args(device.extra_args)
+        except DeployError as err:
+            raise DeployError(f"device {device.name!r}: {err}") from err
     check_distinct_targets(devices)
     return Manifest(
         decode_config=data["decodeConfig"],
@@ -142,6 +165,38 @@ def target(source, extra_args=()):
     else:
         topic = url.path[1:].rstrip("/") or option_value(extra_args, "--fulltopic")
     return (scheme, (url.hostname or "").lower(), port, topic)
+
+
+def check_extra_args(args):
+    """Refuse extraArgs other than the connection options decode-config offers."""
+    allowed = ", ".join(EXTRA_ARG_OPTIONS)
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg.startswith("--") and "=" in arg:
+            name, inline = arg.split("=", 1)[0], True
+        elif arg[:2] in EXTRA_ARG_OPTIONS and len(arg) > 2:  # -P8080
+            name, inline = arg[:2], True
+        else:
+            name, inline = arg, False
+        if name not in EXTRA_ARG_OPTIONS:
+            raise DeployError(f"extraArgs: {arg!r} is not allowed (allowed: {allowed})")
+        count = EXTRA_ARG_OPTIONS[name]
+        if inline and count == 0:
+            raise DeployError(f"extraArgs: {name} takes no value")
+        if inline:
+            continue
+        taken = 0
+        while (
+            i < len(args)
+            and not args[i].startswith("-")
+            and (count == "+" or taken < count)
+        ):
+            i += 1
+            taken += 1
+        if taken < (1 if count == "+" else count):
+            raise DeployError(f"extraArgs: {name} needs a value")
 
 
 def check_distinct_targets(devices):

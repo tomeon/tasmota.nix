@@ -303,6 +303,56 @@ class Manifest(unittest.TestCase):
             td.load_manifest("/nonexistent.json")
 
 
+class ExtraArgs(unittest.TestCase):
+    def test_allowed(self):
+        for args in (
+            ["--fulltopic", "%prefix%/%topic%/"],
+            ["--fulltopic=%prefix%/%topic%/"],
+            ["-P", "8080"],
+            ["-P8080", "--insecure"],
+            ["--cafile", "/etc/ca.pem", "--keepalive", "30"],
+            ["-g", "Wifi", "Mqtt", "-u", "admin"],
+            [],
+        ):
+            td.check_extra_args(args)
+
+    def test_refused(self):
+        for args in (
+            ["--source", "http://other"],
+            ["-s", "http://other"],
+            ["--sour", "http://other"],  # decode-config accepts abbreviations
+            ["-c", "conf"],
+            ["-p", "password"],
+            ["--dry-run"],
+            ["-w"],
+            ["--json-hide-pw"],
+            ["--restore-file", "x.json"],
+            ["stray"],
+        ):
+            with self.assertRaisesRegex(td.DeployError, "not allowed", msg=args):
+                td.check_extra_args(args)
+
+    def test_values(self):
+        for args, message in (
+            (["--fulltopic"], "needs a value"),
+            (["-P", "--insecure"], "needs a value"),
+            (["-g"], "needs a value"),
+            (["--insecure=yes"], "takes no value"),
+            (["-P", "1", "2"], "not allowed"),
+        ):
+            with self.assertRaisesRegex(td.DeployError, message, msg=args):
+                td.check_extra_args(args)
+
+    def test_manifest_refuses_source_override(self):
+        devices = {
+            "a": {"source": "http://a", "extraArgs": ["--source", "http://b"]},
+            "b": {"source": "http://b"},
+        }
+        path = write_json(self, {"version": 1, "decodeConfig": "x", "devices": devices})
+        with self.assertRaisesRegex(td.DeployError, "device 'a': extraArgs"):
+            td.load_manifest(path)
+
+
 class Args(unittest.TestCase):
     def test_jobs_must_be_positive(self):
         with self.assertRaises(SystemExit):
