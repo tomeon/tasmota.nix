@@ -220,10 +220,50 @@ class Manifest(unittest.TestCase):
         with self.assertRaisesRegex(td.DeployError, r"share a source.*: a, b; c, d$"):
             td.load_manifest(path)
 
+    def test_distinct_mqtt_topics_from_extra_args(self):
+        devices = {
+            "a": {
+                "source": "mqtt://broker",
+                "extraArgs": ["--fulltopic", "a/%prefix%/"],
+            },
+            "b": {"source": "mqtt://broker", "extraArgs": ["--fulltopic=b/%prefix%/"]},
+        }
+        path = self.write({"version": 1, "decodeConfig": "x", "devices": devices})
+        self.assertEqual(sorted(td.load_manifest(path).devices), ["a", "b"])
+
     def test_target(self):
         self.assertEqual(td.target("lamp"), ("http", "lamp", 80, ""))
         self.assertNotEqual(td.target("https://lamp"), td.target("http://lamp"))
         self.assertEqual(td.target("http://lamp:bad"), "http://lamp:bad")
+
+    def test_target_http_ignores_path(self):
+        # decode-config reaches HTTP devices by host and port alone.
+        self.assertEqual(td.target("http://lamp/cs?"), td.target("lamp"))
+
+    def test_target_port_from_extra_args(self):
+        want = td.target("http://lamp:8080")
+        self.assertEqual(td.target("lamp", ["-P", "8080"]), want)
+        self.assertEqual(td.target("lamp", ["-P8080"]), want)
+        self.assertEqual(td.target("lamp", ["--port=8080"]), want)
+        self.assertEqual(td.target("http://lamp:8080", ["--port", "1"]), want)
+
+    def test_target_mqtt_topic(self):
+        url_topic = td.target("mqtt://broker/t")
+        self.assertEqual(td.target("mqtt://broker/t", ["--fulltopic", "x"]), url_topic)
+        self.assertEqual(td.target("mqtt://broker", ["--fulltopic", "t"]), url_topic)
+        self.assertNotEqual(
+            td.target("mqtt://broker", ["--fulltopic", "x"]), td.target("mqtt://broker")
+        )
+
+    def test_target_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("a.dmp", "b.dmp"):
+                with open(os.path.join(d, name), "wb"):
+                    pass
+            a, b = os.path.join(d, "a.dmp"), os.path.join(d, "b.dmp")
+            self.assertNotEqual(td.target(a), td.target(b))
+            self.assertEqual(td.target(a), td.target("file://" + a))
+            self.assertEqual(td.target(a), td.target(os.path.relpath(a)))
 
     def test_wrong_version(self):
         path = self.write({"version": 99, "decodeConfig": "x", "devices": {}})

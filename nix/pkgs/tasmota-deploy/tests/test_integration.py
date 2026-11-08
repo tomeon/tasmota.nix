@@ -159,6 +159,21 @@ class Integration(unittest.TestCase):
         config = self.device_config(dev)
         self.assertEqual((config["hostname"], config["mqtt_host"]), ("one", "b"))
 
+    def test_relative_file_source(self):
+        # decode-config runs in a private working directory; a relative
+        # dump-file source must still mean the file next to the caller.
+        with open(self.path("dev.dmp"), "wb") as f:
+            f.write(blank("esp82"))
+        m = self.manifest({"d": {"source": "dev.dmp", "settings": {"hostname": "f"}}})
+        self.assertOk(self.deploy(m, "switch"))
+        out = subprocess.run(
+            [DECODE_CONFIG, "-s", self.path("dev.dmp")],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertEqual(json.loads(out)["hostname"], "f")
+
     def test_selection(self):
         a, b = self.mock(), self.mock()
         m = self.manifest(

@@ -23,7 +23,7 @@
     then lib.all (checkSecrets loc) value
     else true;
 
-  credentialsInUrl = source: builtins.match "[a-z]+://[^/@]*:[^/@]*@.*" source != null;
+  credentialsInUrl = source: builtins.match "[a-zA-Z][a-zA-Z0-9+.-]*://[^/@]*:[^/@]*@.*" source != null;
 
   deviceModule = {name, ...}: {
     imports = [cfg.defaults];

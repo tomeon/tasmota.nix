@@ -94,26 +94,63 @@ def load_manifest(path):
     )
 
 
-def target(source):
-    """Normalize a decode-config source, so equal targets compare equal.
+def option_value(args, *names):
+    """The value argparse would take for an option given in `args`, or None."""
+    value = None
+    for i, arg in enumerate(args):
+        for name in names:
+            if arg == name and i + 1 < len(args):
+                value = args[i + 1]
+            elif name.startswith("--") and arg.startswith(name + "="):
+                value = arg[len(name) + 1 :]
+            elif not name.startswith("--") and arg.startswith(name) and arg != name:
+                value = arg[len(name) :]
+    return value
 
-    A bare host means HTTP to decode-config; credentials, case, default
-    ports and trailing slashes don't change the target.
+
+def is_file_source(source):
+    """Whether decode-config reads `source` as a dump file rather than a device."""
+    scheme = urllib.parse.urlsplit(source).scheme.lower()
+    return scheme == "file" or (scheme not in DEFAULT_PORTS and os.path.isfile(source))
+
+
+def target(source, extra_args=()):
+    """Identify the device decode-config reaches for `source` and `extra_args`.
+
+    As in decode-config: a dump file is a file; anything else without an
+    HTTP or MQTT scheme is an HTTP host; HTTP devices are reached by host
+    and port alone; an MQTT topic in the URL wins over `--fulltopic`; and
+    a port in the URL wins over `--port`.  Credentials, case and default
+    ports don't change the target.
     """
+    if is_file_source(source):
+        return ("file", os.path.realpath(source.removeprefix("file://")))
     try:
-        url = urllib.parse.urlsplit(source if "://" in source else f"http://{source}")
+        url = urllib.parse.urlsplit(source)
+        if url.scheme.lower() not in DEFAULT_PORTS:
+            url = urllib.parse.urlsplit(f"http://{source}")
         scheme = url.scheme.lower()
-        port = url.port or DEFAULT_PORTS.get(scheme)
+        port = int(
+            url.port
+            or option_value(extra_args, "-P", "--port")
+            or DEFAULT_PORTS[scheme]
+        )
     except ValueError:
         return source
-    return (scheme, (url.hostname or "").lower(), port, url.path.rstrip("/"))
+    if scheme.startswith("http"):
+        topic = ""
+    else:
+        topic = url.path[1:].rstrip("/") or option_value(extra_args, "--fulltopic")
+    return (scheme, (url.hostname or "").lower(), port, topic)
 
 
 def check_distinct_targets(devices):
     """Reject devices sharing a target: their settings would race and conflict."""
     by_target = {}
     for name in sorted(devices):
-        by_target.setdefault(target(devices[name].source), []).append(name)
+        device = devices[name]
+        key = target(device.source, device.extra_args)
+        by_target.setdefault(key, []).append(name)
     shared = [names for names in by_target.values() if len(names) > 1]
     if shared:
         raise DeployError(
@@ -322,7 +359,11 @@ class DecodeConfig:
         return text
 
     def _remote_args(self):
-        args = ["--source", self.device.source]
+        source = self.device.source
+        # decode-config runs in the working directory, not the caller's.
+        if is_file_source(source) and not source.lower().startswith("file://"):
+            source = os.path.abspath(source)
+        args = ["--source", source]
         if self.device.password_file:
             if self._config is None:
                 self._config = os.path.join(self.workdir, "decode-config.conf")
