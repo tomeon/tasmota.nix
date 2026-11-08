@@ -297,20 +297,30 @@ def format_changes(changes, hidden=frozenset()):
 
 
 def write_private(path, data, replace=False):
-    """Write `data` (str or bytes) to a file only the owner can read."""
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if replace else os.O_EXCL)
-    fd = os.open(path, flags, 0o600)
-    try:
-        os.fchmod(fd, 0o600)  # an existing file may have had wider permissions
-    except BaseException:
-        os.close(fd)
-        raise
-    if isinstance(data, bytes):
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
+    """Write `data` (str or bytes) to a new file only the owner can read.
+
+    An existing `path` is an error, unless `replace` is set: then a private
+    temporary file is renamed over it, so a symlink at `path` is replaced
+    rather than followed, and readers never see a partial file.
+    """
+    if replace:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".tmp-")
     else:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(data)
+        # O_EXCL also refuses an existing symlink, dangling or not.
+        fd, tmp = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), None
+    try:
+        if isinstance(data, bytes):
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data)
+        if tmp:
+            os.replace(tmp, path)
+    except BaseException:
+        if tmp:
+            os.unlink(tmp)
+        raise
 
 
 def password_config(password):

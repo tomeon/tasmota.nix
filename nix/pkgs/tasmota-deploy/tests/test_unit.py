@@ -139,6 +139,34 @@ class WritePrivate(unittest.TestCase):
                 self.assertEqual(f.read(), "three")
 
 
+class WritePrivateSymlinks(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.target = os.path.join(tmp.name, "target")
+        with open(self.target, "w") as f:
+            f.write("keep")
+        os.chmod(self.target, 0o644)
+        self.link = os.path.join(tmp.name, "link")
+        os.symlink(self.target, self.link)
+
+    def test_replace_replaces_the_link_not_its_target(self):
+        td.write_private(self.link, "new", replace=True)
+        with open(self.target) as f:
+            self.assertEqual(f.read(), "keep")
+        self.assertEqual(os.stat(self.target).st_mode & 0o777, 0o644)
+        self.assertFalse(os.path.islink(self.link))
+        self.assertEqual(os.stat(self.link).st_mode & 0o777, 0o600)
+        with open(self.link) as f:
+            self.assertEqual(f.read(), "new")
+
+    def test_exclusive_refuses_a_link(self):
+        with self.assertRaises(FileExistsError):
+            td.write_private(self.link, b"new")
+        with open(self.target) as f:
+            self.assertEqual(f.read(), "keep")
+
+
 class PasswordConfig(unittest.TestCase):
     def test_quoted(self):
         self.assertEqual(td.password_config('a # "b'), 'password = "a # "b"\n')
