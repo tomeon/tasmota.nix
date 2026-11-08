@@ -1,8 +1,8 @@
-{sources}: {
+{
   lib,
   python3Packages,
   runCommand,
-  ...
+  sources,
 }: let
   dependencies = with python3Packages; [
     requests

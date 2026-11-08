@@ -1,36 +1,35 @@
-# Checks for the modules and the entry points.  Package tests live in each
-# package's passthru.tests.
+# Checks for the generic module, the flake-parts module, the overlay and the
+# flake-compat entry point.  Package tests live in each package's
+# passthru.tests.
 {
+  inputs,
+  lib,
   pkgs,
-  flake-parts,
   self,
-  nixpkgs,
+  system,
+  tasmota-deploy,
 }: let
-  inherit (pkgs) lib;
-  inherit (pkgs.stdenv.hostPlatform) system;
-  packages = import ../pkgs {inherit pkgs;};
+  configuration = args: self.lib.tasmotaConfiguration ({inherit system;} // args);
 
-  eval = modules:
-    (import ../lib/eval-config.nix {
-      inherit pkgs;
-      modules = lib.toList modules;
-    })
-    .config
-    .decode-config;
+  eval = modules: (configuration {inherit modules;}).config;
 
   example = eval ./example.nix;
 
-  # True if evaluating `expr` deeply throws (type errors, conflicts, asserts).
+  # True if evaluating `expr` deeply throws (type errors, conflicts, failed
+  # assertions).
   fails = expr: !(builtins.tryEval (builtins.deepSeq expr expr)).success;
+
+  # Evaluating the manifest file checks assertions.
+  manifestFails = modules: fails (eval modules).build.manifestFile.drvPath;
 
   moduleResults = lib.runTests {
     testSourceDefaultsToName = {
-      expr = (eval {decode-config.devices.lamp = {};}).devices.lamp.source;
+      expr = (eval {fleet.devices.lamp = {};}).fleet.devices.lamp.source;
       expected = "lamp";
     };
 
     testDefaultsApplyToEveryDevice = {
-      expr = lib.mapAttrs (_: d: d.settings.mqtt_host) example.devices;
+      expr = lib.mapAttrs (_: d: d.settings.mqtt_host) example.fleet.devices;
       expected = {
         kitchen = "broker.lan";
         plug = "other.lan";
@@ -38,19 +37,20 @@
     };
 
     testTagsFromDefaultsAndDevice = {
-      expr = example.devices.kitchen.tags;
+      expr = example.fleet.devices.kitchen.tags;
       expected = ["home" "lights"];
     };
 
-    testConflictingListsAreAnError = {
+    testListsDefinedTwiceAreAnError = {
       expr =
         fails
         (eval {
-          decode-config = {
+          fleet = {
             defaults.settings.friendlyname = ["a"];
             devices.x.settings.friendlyname = ["b"];
           };
         })
+      .fleet
       .devices
       .x
       .settings;
@@ -60,11 +60,12 @@
     testDeviceOverridesMkDefault = {
       expr =
         (eval {
-          decode-config = {
+          fleet = {
             defaults.settings.friendlyname = lib.mkDefault ["a"];
             devices.x.settings.friendlyname = ["b"];
           };
         })
+        .fleet
         .devices
         .x
         .settings
@@ -75,11 +76,12 @@
     testNestedSettingsMerge = {
       expr =
         (eval {
-          decode-config = {
+          fleet = {
             defaults.settings.flag.mqtt_enabled = 1;
             devices.x.settings.flag.save_state = 0;
           };
         })
+        .fleet
         .devices
         .x
         .settings;
@@ -89,75 +91,76 @@
       };
     };
 
+    testSettingsRejectNixPaths = {
+      expr = fails (eval {fleet.devices.x.settings.ota_url = ./example.nix;}).fleet.devices.x.settings;
+      expected = true;
+    };
+
     testSecretAsNixPathIsRejected = {
-      expr =
-        fails
-        (eval {
-          decode-config.devices.x.settings.sta_pwd = [{_secret = ./example.nix;}];
-        })
-      .build
-      .manifest
-      .drvPath;
-      expected = true;
-    };
-
-    testPasswordFileAsNixPathIsRejected = {
-      expr = fails (eval {decode-config.devices.x.passwordFile = ./example.nix;}).devices.x.passwordFile;
-      expected = true;
-    };
-
-    testRelativePasswordFileIsRejected = {
-      expr = fails (eval {decode-config.devices.x.passwordFile = "secrets/web";}).devices.x.passwordFile;
+      expr = manifestFails {fleet.devices.x.settings.sta_pwd = [{_secret = ./example.nix;}];};
       expected = true;
     };
 
     testRelativeSecretIsRejected = {
-      expr =
-        fails
-        (eval {
-          decode-config.devices.x.settings.sta_pwd = [{_secret = "secrets/wifi";}];
-        })
-      .build
-      .manifest
-      .drvPath;
+      expr = manifestFails {fleet.devices.x.settings.sta_pwd = [{_secret = "secrets/wifi";}];};
       expected = true;
     };
 
     testSecretWithOtherAttributesIsRejected = {
-      expr =
-        fails
-        (eval {
-          decode-config.devices.x.settings.sta_pwd = [
-            {
-              _secret = "/run/secrets/wifi";
-              extra = 1;
-            }
-          ];
-        })
-      .build
-      .manifest
-      .drvPath;
+      expr = manifestFails {
+        fleet.devices.x.settings.sta_pwd = [
+          {
+            _secret = "/run/secrets/wifi";
+            extra = 1;
+          }
+        ];
+      };
+      expected = true;
+    };
+
+    testPasswordFileAsNixPathIsRejected = {
+      expr = fails (eval {fleet.devices.x.passwordFile = ./example.nix;}).fleet.devices.x.passwordFile;
+      expected = true;
+    };
+
+    testRelativePasswordFileIsRejected = {
+      expr = fails (eval {fleet.devices.x.passwordFile = "secrets/web";}).fleet.devices.x.passwordFile;
       expected = true;
     };
 
     testEmptyTagIsRejected = {
-      expr = fails (eval {decode-config.devices.x.tags = [""];}).devices.x.tags;
+      expr = fails (eval {fleet.devices.x.tags = [""];}).fleet.devices.x.tags;
       expected = true;
+    };
+
+    testCredentialsInSourceWarn = {
+      expr = (eval {fleet.devices.x.source = "HTTP://admin:pw@x.lan";}).warnings;
+      expected = ["fleet.devices.x.source contains a password, which ends up in the Nix store; use passwordFile instead."];
     };
 
     testEvalModulesArgumentsPassThrough = {
       expr =
-        (import ../lib/eval-config.nix {
-          inherit pkgs;
-          modules = {decode-config.devices.lamp = {};};
-          prefix = ["fleet"];
+        (configuration {
+          modules = {fleet.devices.lamp = {};};
+          prefix = ["tasmota"];
         })
         .config
-        .decode-config
+        .fleet
         .devices
         .lamp
         .source;
       expected = "lamp";
+    };
+
+    testManifest = {
+      expr = {
+        inherit (example.build.manifest) version;
+        devices = lib.attrNames example.build.manifest.devices;
+      };
+      expected = {
+        version = 1;
+        devices = ["kitchen" "plug"];
+      };
     };
 
     testNoDevices = {
@@ -166,24 +169,67 @@
     };
   };
 
-  flake = devices:
-    flake-parts.lib.mkFlake {inputs = {inherit self nixpkgs;};} {
-      imports = [../modules/flake-parts];
-      systems = [system];
-      tasmota = devices;
+  # A flake using the flake-parts module, evaluated on the spot.
+  testInputs = {
+    inherit (inputs) nixpkgs;
+    self = {
+      outPath = ./.;
+      inputs = testInputs;
+    };
+  };
+
+  evalFlake = module:
+    (inputs.flake-parts.lib.evalFlakeModule {
+        inputs = testInputs;
+        moduleLocation = "${toString ./.}/default.nix#test-flake";
+      } {
+        imports = [self.flakeModules.default module];
+        systems = [system];
+        tasmota.configurations.example = ./example.nix;
+      }).config.flake;
+
+  flake = evalFlake {};
+
+  flakePartsResults = lib.runTests {
+    testConfigurationIsEvaluated = {
+      expr = flake.legacyPackages.${system}.tasmotaConfigurations.example.config.fleet.devices.kitchen.settings.hostname;
+      expected = "kitchen";
     };
 
-  nonFlake = import ../../default.nix {inherit pkgs;};
+    testPackageAndCheckPerConfiguration = {
+      expr = {
+        packages = lib.attrNames flake.packages.${system};
+        checks = lib.attrNames flake.checks.${system};
+      };
+      expected = {
+        packages = ["tasmota-deploy-example"];
+        checks = ["tasmota-example"];
+      };
+    };
+
+    testPackagesCanBeLeftOut = {
+      expr = (evalFlake {tasmota.flakePackages = false;}).packages.${system} or {};
+      expected = {};
+    };
+
+    testChecksCanBeLeftOut = {
+      expr = (evalFlake {tasmota.flakeCheck = false;}).checks.${system} or {};
+      expected = {};
+    };
+  };
+
+  assertNoFailures = name: results:
+    lib.throwIfNot (results == []) "${name}: ${builtins.toJSON results}" true;
+
+  sameDrv = a: b: a.drvPath == b.drvPath;
 in {
-  module-eval =
-    if moduleResults == []
-    then pkgs.runCommand "tasmota-module-eval" {} "touch $out"
-    else throw "module tests failed: ${builtins.toJSON moduleResults}";
+  module-eval = assert assertNoFailures "module tests" moduleResults;
+    pkgs.emptyFile;
 
   module-manifest =
     pkgs.runCommand "tasmota-module-manifest" {
       nativeBuildInputs = [pkgs.jq];
-      manifest = example.build.manifest;
+      manifest = example.build.manifestFile;
     } ''
       check() {
         jq -e "$1" "$manifest" >/dev/null || { echo "failed: $1" >&2; exit 1; }
@@ -208,33 +254,40 @@ in {
     '';
 
   # The module's manifest and deployer, end to end against mock devices.
-  module-integration = packages.tasmota-deploy.runTests {
+  module-integration = tasmota-deploy.runTests {
     name = "tasmota-module-integration";
     args = "test_integration.Integration.test_nix_manifest";
-    env.NIX_MANIFEST = example.build.manifest;
+    env.NIX_MANIFEST = example.build.manifestFile;
   };
 
   module-validation = example.build.validation;
 
-  flake-parts-module = let
-    withDevices = flake ./example.nix;
-    without = flake {};
-  in
-    pkgs.runCommand "tasmota-flake-parts-module" {} ''
-      test -x ${lib.getExe withDevices.packages.${system}.tasmota-deploy}
-      test -e ${withDevices.checks.${system}.tasmota-validation}
-      ${lib.optionalString (without.packages.${system} or {} ? tasmota-deploy) ''
-        echo "tasmota-deploy should not be defined without devices" >&2
-        exit 1
-      ''}
+  flake-parts-module = assert assertNoFailures "flake-parts module tests" flakePartsResults;
+    pkgs.runCommand "tasmota-flake-parts-module" {
+      deployer = flake.packages.${system}.tasmota-deploy-example;
+      validation = flake.checks.${system}.tasmota-example;
+    } ''
+      test -x "$deployer/bin/tasmota-deploy"
+      test -e "$validation"
       touch "$out"
     '';
 
-  non-flake-entry = pkgs.runCommand "tasmota-non-flake-entry" {} ''
-    test -x ${lib.getExe nonFlake.decode-config}
-    test -x ${lib.getExe nonFlake.tasmota-deploy}
-    test -e ${(nonFlake.evalConfig {modules = [./example.nix];}).config.decode-config.build.validation}
-    test -e ${nonFlake.modules.flake.default}/default.nix
-    touch "$out"
-  '';
+  # flake-compat, as `default.nix` uses it, exposes the same outputs to Nix
+  # without flakes.  (`src = self` rather than `default.nix`'s `./.`, which
+  # flake-compat would copy again in pure evaluation.)
+  flake-compat = let
+    compat = (import inputs.flake-compat {src = self;}).defaultNix;
+    compatExample = compat.lib.tasmotaConfiguration {
+      inherit system;
+      modules = ./example.nix;
+    };
+  in
+    assert sameDrv compat.packages.${system}.tasmota-deploy tasmota-deploy;
+    assert sameDrv compatExample.config.build.validation example.build.validation;
+    assert lib.attrNames compat.flakeModules == lib.attrNames self.flakeModules;
+      pkgs.emptyFile;
+
+  # The overlay builds the packages with the nixpkgs it is applied to.
+  overlay = assert sameDrv (pkgs.extend self.overlays.default).tasmota-deploy tasmota-deploy;
+    pkgs.emptyFile;
 }

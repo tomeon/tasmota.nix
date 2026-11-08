@@ -1,7 +1,7 @@
 # Example configuration shared by the tests.  The integration test points
 # the secret paths at files of its own.
 {lib, ...}: {
-  decode-config = {
+  fleet = {
     defaults = {
       tags = ["home"];
       settings.mqtt_host = lib.mkDefault "broker.lan";

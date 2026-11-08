@@ -11,7 +11,7 @@ configuration differs (Tasmota reboots after every upload).
 
 ```nix
 {lib, ...}: {
-  decode-config = {
+  fleet = {
     # Applied to every device.
     defaults = {
       tags = ["home"];
@@ -47,8 +47,9 @@ configuration differs (Tasmota reboots after every upload).
   same way as HTTP ones, with `passwordFile` as the broker password; pass TLS
   and topic options through `extraArgs`.
 
-The options live under `decode-config` so that other namespaces can be added
-alongside it.
+Besides `fleet.*`, the module has `packages.{decode-config,tasmota-deploy}`
+(the tools used) and `build.*`: `build.deployer` is `tasmota-deploy` with the
+configuration built in, and `build.validation` checks it offline.
 
 ## Using it
 
@@ -60,38 +61,49 @@ alongside it.
 
   outputs = inputs:
     inputs.flake-parts.lib.mkFlake {inherit inputs;} {
-      imports = [inputs.tasmota-nix.modules.flake.default];
+      imports = [inputs.tasmota-nix.flakeModules.default];
       systems = ["x86_64-linux"];
-      tasmota = ./tasmota.nix;  # the configuration above
+      tasmota.configurations.home = ./tasmota.nix;  # the configuration above
     };
 }
 ```
 
-This adds `packages.<system>.tasmota-deploy` (with the configuration built in)
-and `checks.<system>.tasmota-validation`:
+For each configuration and system this adds
+`legacyPackages.<system>.tasmotaConfigurations.<name>` (the evaluated
+configuration), `packages.<system>.tasmota-deploy-<name>` and
+`checks.<system>.tasmota-<name>`. Set `tasmota.flakePackages` or
+`tasmota.flakeCheck` to `false` to leave the packages or checks out.
 
 ```console
-$ nix run .#tasmota-deploy -- diff
-$ nix run .#tasmota-deploy -- switch --on @lights
+$ nix run .#tasmota-deploy-home -- diff
+$ nix run .#tasmota-deploy-home -- switch --on @lights
 ```
 
+Flake users who don't use flake-parts can call
+`inputs.tasmota-nix.lib.tasmotaConfiguration {system = "x86_64-linux"; modules = [./tasmota.nix];}`.
+
+The tools come from this flake's nixpkgs (follow it with
+`inputs.tasmota-nix.inputs.nixpkgs.follows`), and `overlays.default` adds
+`decode-config` and `tasmota-deploy` to your own.
+
 ### Without flakes
+
+`default.nix` gives this flake's outputs through
+[flake-compat](https://github.com/edolstra/flake-compat):
 
 ```nix
 # fleet.nix
 let
-  tasmota = import (fetchTarball "https://github.com/tomeon/tasmota.nix/archive/main.tar.gz") {};
+  tasmota-nix = import (fetchTarball "https://github.com/tomeon/tasmota.nix/archive/main.tar.gz");
 in
-  (tasmota.evalConfig {modules = [./tasmota.nix];}).config.decode-config.build.deployer
+  (tasmota-nix.lib.tasmotaConfiguration {modules = [./tasmota.nix];}).config.build.deployer
 ```
 
 ```console
 $ nix-build fleet.nix && ./result/bin/tasmota-deploy diff
 ```
 
-`import ... {}` uses the nixpkgs revision pinned in this repository's
-`flake.lock`; pass `{pkgs = ...;}` to use your own. Flake users who don't use
-flake-parts can call `inputs.tasmota-nix.lib.evalConfig {pkgs = ...; modules = [...];}`.
+Without flakes, `system` defaults to `builtins.currentSystem`.
 
 ## tasmota-deploy
 
