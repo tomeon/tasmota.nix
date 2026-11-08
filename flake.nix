@@ -7,6 +7,10 @@
     devshell.url = "github:numtide/devshell";
     devshell.inputs.nixpkgs.follows = "nixpkgs";
 
+    # For `default.nix`, the entry point for Nix without flakes.
+    flake-compat.url = "github:edolstra/flake-compat";
+    flake-compat.flake = false;
+
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
 
@@ -18,13 +22,18 @@
     inputs.flake-parts.lib.mkFlake {inherit inputs;} ({
       flake-parts-lib,
       inputs,
+      lib,
       moduleWithSystem,
+      self,
       ...
     }: {
       imports = [
         inputs.devshell.flakeModule
+        inputs.flake-parts.flakeModules.easyOverlay
         inputs.flake-parts.flakeModules.modules
         inputs.treefmt-nix.flakeModule
+        ./nix/checks.nix
+        ./nix/packages.nix
       ];
 
       systems = [
@@ -33,12 +42,7 @@
         "x86_64-linux"
       ];
 
-      perSystem = {
-        config,
-        lib,
-        pkgs,
-        ...
-      }: {
+      perSystem = {pkgs, ...}: {
         devshells.default = let
           cdToplevel = ''
             cd "''${TOPLEVEL?}" || exit
@@ -97,13 +101,6 @@
           ];
         };
 
-        packages = let
-          sources = pkgs.callPackage ./nix/pkgs/_sources/generated.nix {};
-        in {
-          decode-config = pkgs.callPackage (import ./nix/pkgs/decode-config {inherit sources;}) {};
-          default = config.packages.decode-config;
-        };
-
         treefmt = let
           nixCommon = {
             enable = true;
@@ -112,9 +109,8 @@
         in {
           flakeFormatter = true;
           projectRootFile = "flake.nix";
-          #programs.black.enable = true;
-          #programs.ruff-check.enable = true;
-          #programs.ruff-format.enable = true;
+          programs.ruff-check.enable = true;
+          programs.ruff-format.enable = true;
           programs.alejandra = nixCommon;
           programs.deadnix =
             nixCommon
@@ -128,14 +124,32 @@
       };
 
       flake = {
-        modules = {
-          tasmota = let
-            decode-config = flake-parts-lib.importApply ./nix/modules/tasmota/default.nix {inherit moduleWithSystem;};
+        lib = import ./nix/lib {
+          inherit lib;
+          tasmotaModule = self.modules.tasmota.default;
+        };
+
+        modules = let
+          importModule = lib.flip flake-parts-lib.importApply;
+        in {
+          # `imports = [inputs.tasmota-nix.flakeModules.default];`
+          flake = let
+            tasmota = importModule {tasmotaLib = self.lib;} ./nix/modules/flake-parts;
           in {
-            inherit decode-config;
-            default = decode-config;
+            inherit tasmota;
+            default = tasmota;
+          };
+
+          # The generic module; evaluate it with `lib.tasmotaConfiguration`.
+          tasmota = let
+            tasmota = importModule {inherit moduleWithSystem;} ./nix/modules/tasmota;
+          in {
+            inherit tasmota;
+            default = tasmota;
           };
         };
+
+        flakeModules = self.modules.flake;
       };
     });
 }
