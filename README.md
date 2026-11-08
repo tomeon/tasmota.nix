@@ -38,12 +38,11 @@ configuration differs (Tasmota reboots after every upload).
   device's current settings, which is the easiest way to find key names.
 - **Secrets**: `{_secret = "/path";}` anywhere in `settings` is replaced with
   the file's contents (minus trailing newlines) at deploy time, as in nixpkgs'
-  `genJqSecretsReplacementSnippet`. Use strings, not Nix paths, for secret and
-  password files so they stay out of the Nix store. Relative paths are
-  resolved against the directory `tasmota-deploy` runs in.
-- **Lists don't merge**: two different definitions of the same list (say, in
-  `defaults` and in a device) are an error rather than being concatenated.
-  Use `lib.mkDefault` in `defaults`.
+  `genJqSecretsReplacementSnippet`. Secret and password files must be absolute
+  paths given as strings, not Nix paths, so they stay out of the Nix store.
+- **Lists don't merge**: defining the same list in two places (say, in
+  `defaults` and in a device) is an error rather than a concatenation, since
+  Tasmota arrays are positional. Use `lib.mkDefault` in `defaults`.
 - **MQTT sources** (`mqtt://` / `mqtts://`) are handed to decode-config the
   same way as HTTP ones, with `passwordFile` as the broker password; pass TLS
   and topic options through `extraArgs`.

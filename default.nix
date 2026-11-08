@@ -28,9 +28,6 @@ in
       flake.default = ./nix/modules/flake-parts;
     };
 
-    evalConfig = {
-      modules ? [],
-      specialArgs ? {},
-    }:
-      import ./nix/lib/eval-config.nix {inherit pkgs modules specialArgs;};
+    # Arguments as for nix/lib/eval-config.nix, with `pkgs` defaulted.
+    evalConfig = args: import ./nix/lib/eval-config.nix ({inherit pkgs;} // args);
   }

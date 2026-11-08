@@ -106,6 +106,60 @@
       expected = true;
     };
 
+    testRelativePasswordFileIsRejected = {
+      expr = fails (eval {decode-config.devices.x.passwordFile = "secrets/web";}).devices.x.passwordFile;
+      expected = true;
+    };
+
+    testRelativeSecretIsRejected = {
+      expr =
+        fails
+        (eval {
+          decode-config.devices.x.settings.sta_pwd = [{_secret = "secrets/wifi";}];
+        })
+      .build
+      .manifest
+      .drvPath;
+      expected = true;
+    };
+
+    testSecretWithOtherAttributesIsRejected = {
+      expr =
+        fails
+        (eval {
+          decode-config.devices.x.settings.sta_pwd = [
+            {
+              _secret = "/run/secrets/wifi";
+              extra = 1;
+            }
+          ];
+        })
+      .build
+      .manifest
+      .drvPath;
+      expected = true;
+    };
+
+    testEmptyTagIsRejected = {
+      expr = fails (eval {decode-config.devices.x.tags = [""];}).devices.x.tags;
+      expected = true;
+    };
+
+    testEvalModulesArgumentsPassThrough = {
+      expr =
+        (import ../lib/eval-config.nix {
+          inherit pkgs;
+          modules = {decode-config.devices.lamp = {};};
+          prefix = ["fleet"];
+        })
+        .config
+        .decode-config
+        .devices
+        .lamp
+        .source;
+      expected = "lamp";
+    };
+
     testNoDevices = {
       expr = (eval {}).build.validation ? drvPath;
       expected = true;
@@ -141,9 +195,9 @@ in {
       check '.devices | keys == ["kitchen", "plug"]'
       check '.devices.kitchen == {
         source: "http://kitchen.lan",
-        passwordFile: "web",
+        passwordFile: "/run/secrets/tasmota-web",
         tags: ["home", "lights"],
-        settings: {hostname: "kitchen", mqtt_host: "broker.lan", sta_pwd: [{_secret: "wifi"}]},
+        settings: {hostname: "kitchen", mqtt_host: "broker.lan", sta_pwd: [{_secret: "/run/secrets/wifi"}]},
         extraArgs: [],
         validate: true
       }'

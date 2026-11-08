@@ -1,5 +1,5 @@
-# Example configuration shared by the tests.  Secret paths are relative,
-# so the integration test can provide the files in its working directory.
+# Example configuration shared by the tests.  The integration test points
+# the secret paths at files of its own.
 {lib, ...}: {
   decode-config = {
     defaults = {
@@ -9,11 +9,11 @@
 
     devices.kitchen = {
       source = "http://kitchen.lan";
-      passwordFile = "web";
+      passwordFile = "/run/secrets/tasmota-web";
       tags = ["lights"];
       settings = {
         hostname = "kitchen";
-        sta_pwd = [{_secret = "wifi";}];
+        sta_pwd = [{_secret = "/run/secrets/wifi";}];
       };
     };
 

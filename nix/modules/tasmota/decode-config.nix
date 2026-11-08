@@ -9,15 +9,36 @@
   cfg = config.decode-config;
   packages = import ../../pkgs {inherit pkgs;};
 
-  # `toJSON` would copy a Nix path into the world-readable store.
+  # A secret's location: an absolute path given as a string, so that the
+  # file is never copied into the world-readable Nix store.
+  externalFile = types.pathWith {
+    absolute = true;
+    inStore = false;
+  };
+
+  # Any JSON value.  Unlike `pkgs.formats.json`, paths are rejected (turning
+  # one into JSON would copy the file into the Nix store), and differing list
+  # definitions are an error rather than concatenated, since Tasmota arrays
+  # are positional.
+  jsonValue =
+    types.nullOr (types.oneOf [
+      types.bool
+      types.int
+      types.float
+      types.str
+      (types.attrsOf jsonValue)
+      (types.uniq (types.listOf jsonValue))
+    ])
+    // {description = "JSON value";};
+
   checkSecrets = loc: value:
     if builtins.isAttrs value
     then
-      if value ? _secret && builtins.isPath value._secret
+      if value ? _secret
       then
-        throw ''
-          ${loc}._secret is a Nix path, which would copy the secret into the Nix store.
-          Use a string instead, e.g. "/run/secrets/wifi".''
+        lib.throwIfNot (lib.attrNames value == ["_secret"] && externalFile.check value._secret)
+        "${loc}: a secret must be written `{ _secret = \"/absolute/path\"; }`, with a string outside the Nix store."
+        true
       else lib.all lib.id (lib.mapAttrsToList (k: checkSecrets "${loc}.${k}") value)
     else if builtins.isList value
     then lib.all (checkSecrets loc) value
@@ -42,20 +63,19 @@
       };
 
       passwordFile = mkOption {
-        type = types.nullOr types.nonEmptyStr;
+        type = types.nullOr externalFile;
         default = null;
         example = "/run/secrets/tasmota-web";
         description = ''
           File holding the device's web password (HTTP sources) or the MQTT
-          broker password (MQTT sources).  It is read when deploying, not
-          when building; relative paths are resolved against the directory
-          `tasmota-deploy` runs in.  Give a string, not a Nix path, so the
-          file is not copied into the Nix store.
+          broker password (MQTT sources), read when deploying, not when
+          building.  An absolute path given as a string, so that the file is
+          not copied into the Nix store.
         '';
       };
 
       tags = mkOption {
-        type = types.listOf types.str;
+        type = types.listOf types.nonEmptyStr;
         default = [];
         example = ["lights" "upstairs"];
         description = ''
@@ -64,9 +84,7 @@
       };
 
       settings = mkOption {
-        # Unlike `types.json`, `anything` refuses to merge differing lists
-        # rather than concatenating them; Tasmota arrays are positional.
-        type = types.attrsOf types.anything;
+        type = types.attrsOf jsonValue;
         default = {};
         example = literalExpression ''
           {
@@ -82,7 +100,7 @@
 
           Run `tasmota-deploy pull` to see the keys a device has.
 
-          An attribute set `{ _secret = "/path"; }` is replaced with the
+          An attribute set `{ _secret = "/absolute/path"; }` is replaced with the
           contents of that file (minus trailing newlines) when deploying,
           following the nixpkgs `genJqSecretsReplacementSnippet` convention.
         '';

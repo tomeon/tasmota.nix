@@ -412,10 +412,24 @@ class Integration(unittest.TestCase):
         with open(os.environ["NIX_MANIFEST"]) as f:
             manifest = json.load(f)
         mocks = {name: self.mock() for name in manifest["devices"]}
+
+        def local_secrets(value):
+            # Point each secret at a file in the test's directory, holding
+            # "<basename>-secret".
+            if isinstance(value, dict) and set(value) == {"_secret"}:
+                name = os.path.basename(value["_secret"])
+                return {"_secret": self.secret(name, f"{name}-secret")}
+            if isinstance(value, dict):
+                return {k: local_secrets(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [local_secrets(v) for v in value]
+            return value
+
         for name, device in manifest["devices"].items():
             device["source"] = mocks[name].url
-        for path in ("web", "wifi"):
-            self.secret(path, f"{path}-secret")
+            device["settings"] = local_secrets(device["settings"])
+            if device.get("passwordFile"):
+                device["passwordFile"] = self.secret("web", "web-secret")
         path = self.path("nix-manifest.json")
         with open(path, "w") as f:
             json.dump(manifest, f)
